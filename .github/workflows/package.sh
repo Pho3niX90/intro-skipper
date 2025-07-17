@@ -46,9 +46,9 @@ checksum="$(md5sum "$zip" | cut -f 1 -d " ")"
 cat > manifest.json <<'EOF'
 {
     "version": "ASSEMBLY",
-    "changelog": "- See the full changelog at [GitHub](https://github.com/ConfusedPolarBear/intro-skipper/blob/master/CHANGELOG.md)\n",
-    "targetAbi": "10.8.4.0",
-    "sourceUrl": "https://github.com/ConfusedPolarBear/intro-skipper/releases/download/VERSION/ZIP",
+    "changelog": "- See the full changelog at [GitHub](https://github.com/Pho3niX90/intro-skipper/blob/master/CHANGELOG.md)\n",
+    "targetAbi": "10.10.7.0",
+    "sourceUrl": "https://github.com/Pho3niX90/intro-skipper/releases/download/VERSION/ZIP",
     "checksum": "CHECKSUM",
     "timestamp": "DATE"
 }
