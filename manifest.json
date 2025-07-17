@@ -9,6 +9,14 @@
         "imageUrl": "https://raw.githubusercontent.com/ConfusedPolarBear/intro-skipper/master/images/logo.png",
         "versions": [
             {
+                "version": "0.1.8.0",
+                "changelog": "- See the full changelog at [GitHub](https://github.com/Pho3niX90/intro-skipper/blob/master/CHANGELOG.md)\n",
+                "targetAbi": "10.10.7.0",
+                "sourceUrl": "https://github.com/Pho3niX90/intro-skipper/releases/download/1.8.2/intro-skipper-1.8.2.zip",
+                "checksum": "3411737493b6ab2f2c970479e9077d40",
+                "timestamp": "2025-07-17T17:39:04Z"
+            },
+            {
                 "version": "0.1.8.1",
                 "changelog": "- See the full changelog at [GitHub](https://github.com/Pho3niX90/intro-skipper/blob/master/CHANGELOG.md)\n",
                 "targetAbi": "10.10.7.0",
