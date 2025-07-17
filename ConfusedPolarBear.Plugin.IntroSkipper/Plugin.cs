@@ -7,7 +7,6 @@ using MediaBrowser.Common.Configuration;
 using MediaBrowser.Common.Plugins;
 using MediaBrowser.Controller.Configuration;
 using MediaBrowser.Controller.Entities;
-using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Persistence;
 using MediaBrowser.Model.Entities;
@@ -276,7 +275,13 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
 
     internal BaseItem GetItem(Guid id)
     {
-        return _libraryManager.GetItemById(id);
+        var item = _libraryManager.GetItemById(id);
+        if (item is null)
+        {
+            throw new InvalidOperationException($"Item with id '{id}' was not found.");
+        }
+
+        return item;
     }
 
     /// <summary>

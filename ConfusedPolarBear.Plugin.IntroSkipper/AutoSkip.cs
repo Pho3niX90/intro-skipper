@@ -5,34 +5,33 @@ using System.Threading.Tasks;
 using System.Timers;
 using MediaBrowser.Common.Extensions;
 using MediaBrowser.Controller.Library;
-using MediaBrowser.Controller.Plugins;
 using MediaBrowser.Controller.Session;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Session;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace ConfusedPolarBear.Plugin.IntroSkipper;
 
 /// <summary>
-/// Automatically skip past introduction sequences.
-/// Commands clients to seek to the end of the intro as soon as they start playing it.
+/// Background service that automatically skips intros during playback.
 /// </summary>
-public class AutoSkip : IServerEntryPoint
+public class AutoSkip : IHostedService, IDisposable
 {
+    private readonly ILogger<AutoSkip> _logger;
+    private readonly IUserDataManager _userDataManager;
+    private readonly ISessionManager _sessionManager;
+    private readonly Dictionary<string, bool> _sentSeekCommand = new();
     private readonly object _sentSeekCommandLock = new();
-
-    private ILogger<AutoSkip> _logger;
-    private IUserDataManager _userDataManager;
-    private ISessionManager _sessionManager;
-    private System.Timers.Timer _playbackTimer = new(1000);
-    private Dictionary<string, bool> _sentSeekCommand;
+    private readonly System.Timers.Timer _playbackTimer = new(1000);
+    private bool _disposed;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AutoSkip"/> class.
     /// </summary>
-    /// <param name="userDataManager">User data manager.</param>
-    /// <param name="sessionManager">Session manager.</param>
-    /// <param name="logger">Logger.</param>
+    /// <param name="userDataManager">User data manager service.</param>
+    /// <param name="sessionManager">Session manager service.</param>
+    /// <param name="logger">Logger instance.</param>
     public AutoSkip(
         IUserDataManager userDataManager,
         ISessionManager sessionManager,
@@ -41,56 +40,75 @@ public class AutoSkip : IServerEntryPoint
         _userDataManager = userDataManager;
         _sessionManager = sessionManager;
         _logger = logger;
-        _sentSeekCommand = new Dictionary<string, bool>();
     }
 
     /// <summary>
-    /// If introduction auto skipping is enabled, set it up.
+    /// Starts the intro skip logic when the plugin is loaded.
     /// </summary>
-    /// <returns>Task.</returns>
-    public Task RunAsync()
+    /// <param name="cancellationToken">.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous operation.</returns>
+    public Task StartAsync(CancellationToken cancellationToken)
     {
-        _logger.LogDebug("Setting up automatic skipping");
+        _logger.LogDebug("Initializing AutoSkip...");
 
         _userDataManager.UserDataSaved += UserDataManager_UserDataSaved;
         Plugin.Instance!.AutoSkipChanged += AutoSkipChanged;
 
-        // Make the timer restart automatically and set enabled to match the configuration value.
         _playbackTimer.AutoReset = true;
         _playbackTimer.Elapsed += PlaybackTimer_Elapsed;
 
-        AutoSkipChanged(null, EventArgs.Empty);
+        AutoSkipChanged(null, EventArgs.Empty); // Start or stop timer based on config
 
         return Task.CompletedTask;
     }
 
-    private void AutoSkipChanged(object? sender, EventArgs e)
+    /// <summary>
+    /// Stops the background service.
+    /// </summary>
+    /// <param name="cancellationToken">.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous operation.</returns>
+    public Task StopAsync(CancellationToken cancellationToken)
     {
-        var newState = Plugin.Instance!.Configuration.AutoSkip;
-        _logger.LogDebug("Setting playback timer enabled to {NewState}", newState);
-        _playbackTimer.Enabled = newState;
+        _logger.LogDebug("Stopping AutoSkip service.");
+
+        _userDataManager.UserDataSaved -= UserDataManager_UserDataSaved;
+        _playbackTimer.Stop();
+        _playbackTimer.Dispose();
+
+        return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// Called when plugin config changes (e.g., enabling/disabling AutoSkip).
+    /// </summary>
+    private void AutoSkipChanged(object? sender, EventArgs e)
+    {
+        var enabled = Plugin.Instance!.Configuration.AutoSkip;
+        _logger.LogDebug("Setting playback timer enabled to {Enabled}", enabled);
+        _playbackTimer.Enabled = enabled;
+    }
+
+    /// <summary>
+    /// Tracks playback start/stop to determine if a seek should be issued.
+    /// </summary>
     private void UserDataManager_UserDataSaved(object? sender, UserDataSaveEventArgs e)
     {
-        var itemId = e.Item.Id;
-        var newState = false;
-        var episodeNumber = e.Item.IndexNumber.GetValueOrDefault(-1);
-
-        // Ignore all events except playback start & end
         if (e.SaveReason != UserDataSaveReason.PlaybackStart && e.SaveReason != UserDataSaveReason.PlaybackFinished)
         {
             return;
         }
 
-        // Lookup the session for this item.
+        var itemId = e.Item.Id;
+        var episodeNumber = e.Item.IndexNumber.GetValueOrDefault(-1);
+        var skipState = false;
+
         SessionInfo? session = null;
 
         try
         {
             foreach (var needle in _sessionManager.Sessions)
             {
-                if (needle.UserId == e.UserId && needle.NowPlayingItem.Id == itemId)
+                if (needle.UserId == e.UserId && needle.NowPlayingItem?.Id == itemId)
                 {
                     session = needle;
                     break;
@@ -99,87 +117,84 @@ public class AutoSkip : IServerEntryPoint
 
             if (session == null)
             {
-                _logger.LogInformation("Unable to find session for {Item}", itemId);
+                _logger.LogInformation("Unable to find session for {ItemId}", itemId);
                 return;
             }
         }
-        catch (Exception ex) when (ex is NullReferenceException || ex is ResourceNotFoundException)
+        catch (Exception ex) when (ex is NullReferenceException or ResourceNotFoundException)
         {
             return;
         }
 
-        // If this is the first episode in the season, and SkipFirstEpisode is false, pretend that we've already sent the seek command for this playback session.
         if (!Plugin.Instance!.Configuration.SkipFirstEpisode && episodeNumber == 1)
         {
-            newState = true;
+            skipState = true;
         }
 
-        // Reset the seek command state for this device.
         lock (_sentSeekCommandLock)
         {
-            var device = session.DeviceId;
-
-            _logger.LogDebug("Resetting seek command state for session {Session}", device);
-            _sentSeekCommand[device] = newState;
+            _logger.LogDebug("Resetting seek command state for session {Session}", session.DeviceId);
+            _sentSeekCommand[session.DeviceId] = skipState;
         }
     }
 
+    /// <summary>
+    /// Periodically checks playback positions and issues seek commands if in intro range.
+    /// </summary>
     private void PlaybackTimer_Elapsed(object? sender, ElapsedEventArgs e)
     {
         foreach (var session in _sessionManager.Sessions)
         {
             var deviceId = session.DeviceId;
-            var itemId = session.NowPlayingItem.Id;
+            var item = session.NowPlayingItem;
+
+            if (item == null)
+            {
+                continue;
+            }
+
+            var itemId = item.Id;
             var position = session.PlayState.PositionTicks / TimeSpan.TicksPerSecond;
 
-            // Don't send the seek command more than once in the same session.
             lock (_sentSeekCommandLock)
             {
                 if (_sentSeekCommand.TryGetValue(deviceId, out var sent) && sent)
                 {
-                    _logger.LogTrace("Already sent seek command for session {Session}", deviceId);
+                    _logger.LogTrace("Seek already sent for session {DeviceId}", deviceId);
                     continue;
                 }
             }
 
-            // Assert that an intro was detected for this item.
             if (!Plugin.Instance!.Intros.TryGetValue(itemId, out var intro) || !intro.Valid)
             {
                 continue;
             }
 
-            // Seek is unreliable if called at the very start of an episode.
             var adjustedStart = Math.Max(5, intro.IntroStart);
 
-            _logger.LogTrace(
-                "Playback position is {Position}, intro runs from {Start} to {End}",
-                position,
-                adjustedStart,
-                intro.IntroEnd);
+            _logger.LogTrace("Position: {Position}s, Intro: {Start}s–{End}s", position, adjustedStart, intro.IntroEnd);
 
             if (position < adjustedStart || position > intro.IntroEnd)
             {
                 continue;
             }
 
-            // Notify the user that an introduction is being skipped for them.
-            var notificationText = Plugin.Instance!.Configuration.AutoSkipNotificationText;
-            if (!string.IsNullOrWhiteSpace(notificationText))
+            var message = Plugin.Instance!.Configuration.AutoSkipNotificationText;
+            if (!string.IsNullOrWhiteSpace(message))
             {
                 _sessionManager.SendMessageCommand(
-                session.Id,
-                session.Id,
-                new MessageCommand()
-                {
-                    Header = string.Empty,      // some clients require header to be a string instead of null
-                    Text = notificationText,
-                    TimeoutMs = 2000,
-                },
-                CancellationToken.None);
+                    session.Id,
+                    session.Id,
+                    new MessageCommand
+                    {
+                        Header = string.Empty,
+                        Text = message,
+                        TimeoutMs = 2000
+                    },
+                    CancellationToken.None);
             }
 
-            _logger.LogDebug("Sending seek command to {Session}", deviceId);
-
+            _logger.LogDebug("Sending seek command to {DeviceId}", deviceId);
             var introEnd = (long)intro.IntroEnd - Plugin.Instance!.Configuration.SecondsOfIntroToPlay;
 
             _sessionManager.SendPlaystateCommand(
@@ -189,41 +204,47 @@ public class AutoSkip : IServerEntryPoint
                 {
                     Command = PlaystateCommand.Seek,
                     ControllingUserId = session.UserId.ToString("N"),
-                    SeekPositionTicks = introEnd * TimeSpan.TicksPerSecond,
+                    SeekPositionTicks = introEnd * TimeSpan.TicksPerSecond
                 },
                 CancellationToken.None);
 
-            // Flag that we've sent the seek command so that it's not sent repeatedly
             lock (_sentSeekCommandLock)
             {
-                _logger.LogTrace("Setting seek command state for session {Session}", deviceId);
+                _logger.LogTrace("Marking seek as sent for session {DeviceId}", deviceId);
                 _sentSeekCommand[deviceId] = true;
             }
         }
     }
 
     /// <summary>
-    /// Dispose.
+    /// Actual dispose method following the dispose pattern.
+    /// </summary>
+    /// <param name="disposing">True when called from Dispose(), false when called from finalizer.</param>
+    protected virtual void Dispose(bool disposing)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        if (disposing)
+        {
+            _userDataManager.UserDataSaved -= UserDataManager_UserDataSaved;
+            Plugin.Instance!.AutoSkipChanged -= AutoSkipChanged;
+
+            _playbackTimer.Stop();
+            _playbackTimer.Dispose();
+        }
+
+        _disposed = true;
+    }
+
+    /// <summary>
+    /// Releases unmanaged and managed resources.
     /// </summary>
     public void Dispose()
     {
         Dispose(true);
         GC.SuppressFinalize(this);
-    }
-
-    /// <summary>
-    /// Protected dispose.
-    /// </summary>
-    /// <param name="disposing">Dispose.</param>
-    protected virtual void Dispose(bool disposing)
-    {
-        if (!disposing)
-        {
-            return;
-        }
-
-        _userDataManager.UserDataSaved -= UserDataManager_UserDataSaved;
-        _playbackTimer.Stop();
-        _playbackTimer.Dispose();
     }
 }

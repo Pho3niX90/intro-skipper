@@ -1,36 +1,36 @@
 using System;
-using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 using MediaBrowser.Controller.Library;
-using MediaBrowser.Controller.Plugins;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace ConfusedPolarBear.Plugin.IntroSkipper;
 
 /// <summary>
-/// Server entrypoint.
+/// Initializes plugin logic during Jellyfin startup. Replaces IServerEntryPoint for Jellyfin 10.9+.
 /// </summary>
-public class Entrypoint : IServerEntryPoint
+public class StartupTask : IHostedService
 {
     private readonly IUserManager _userManager;
     private readonly IUserViewManager _userViewManager;
     private readonly ILibraryManager _libraryManager;
-    private readonly ILogger<Entrypoint> _logger;
+    private readonly ILogger<StartupTask> _logger;
     private readonly ILoggerFactory _loggerFactory;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="Entrypoint"/> class.
+    /// Initializes a new instance of the <see cref="StartupTask"/> class.
     /// </summary>
-    /// <param name="userManager">User manager.</param>
-    /// <param name="userViewManager">User view manager.</param>
-    /// <param name="libraryManager">Library manager.</param>
-    /// <param name="logger">Logger.</param>
-    /// <param name="loggerFactory">Logger factory.</param>
-    public Entrypoint(
+    /// <param name="userManager">User manager service.</param>
+    /// <param name="userViewManager">User view manager service.</param>
+    /// <param name="libraryManager">Library manager service.</param>
+    /// <param name="logger">Logger for this class.</param>
+    /// <param name="loggerFactory">Logger factory used for dependent loggers.</param>
+    public StartupTask(
         IUserManager userManager,
         IUserViewManager userViewManager,
         ILibraryManager libraryManager,
-        ILogger<Entrypoint> logger,
+        ILogger<StartupTask> logger,
         ILoggerFactory loggerFactory)
     {
         _userManager = userManager;
@@ -41,19 +41,16 @@ public class Entrypoint : IServerEntryPoint
     }
 
     /// <summary>
-    /// Registers event handler.
+    /// Called when the plugin is loaded and Jellyfin starts.
     /// </summary>
-    /// <returns>Task.</returns>
-    public Task RunAsync()
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>A completed task.</returns>
+    public Task StartAsync(CancellationToken cancellationToken)
     {
         FFmpegWrapper.Logger = _logger;
 
-        // TODO: when a new item is added to the server, immediately analyze the season it belongs to
-        // instead of waiting for the next task interval. The task start should be debounced by a few seconds.
-
         try
         {
-            // Enqueue all episodes at startup to ensure any FFmpeg errors appear as early as possible
             _logger.LogInformation("Running startup enqueue");
             var queueManager = new QueueManager(_loggerFactory.CreateLogger<QueueManager>(), _libraryManager);
             queueManager.GetMediaItems();
@@ -67,23 +64,13 @@ public class Entrypoint : IServerEntryPoint
     }
 
     /// <summary>
-    /// Dispose.
+    /// Called when the plugin is being unloaded or Jellyfin is stopping.
     /// </summary>
-    public void Dispose()
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>A completed task.</returns>
+    public Task StopAsync(CancellationToken cancellationToken)
     {
-        Dispose(true);
-        GC.SuppressFinalize(this);
-    }
-
-    /// <summary>
-    /// Protected dispose.
-    /// </summary>
-    /// <param name="dispose">Dispose.</param>
-    protected virtual void Dispose(bool dispose)
-    {
-        if (!dispose)
-        {
-            return;
-        }
+        // Cleanup logic can be added here if needed
+        return Task.CompletedTask;
     }
 }
