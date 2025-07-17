@@ -294,16 +294,17 @@ public static class FFmpegWrapper
         // Print the FFmpeg detection status at the top.
         // Format: "* FFmpeg: `error`"
         // Append two newlines to separate the bulleted list from the logs
+        string errorStatus = ChromaprintLogs.TryGetValue("error", out var value) ? value : "unknown";
         var logs = string.Format(
             CultureInfo.InvariantCulture,
             "* FFmpeg: `{0}`\n\n",
-            ChromaprintLogs["error"]);
+            errorStatus);
 
         // Always include ffmpeg version information
         logs += FormatFFmpegLog("version");
 
         // Don't print feature detection logs if the plugin started up okay
-        if (ChromaprintLogs["error"] == "okay")
+        if (errorStatus == "okay")
         {
             return logs;
         }
