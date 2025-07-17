@@ -40,11 +40,68 @@ jobs:
           package/*.json
         if-no-files-found: error
 
+    - name: Update manifest.json with package/manifest.json
+      id: manifest
+      run: |
+        # Read the package/manifest.json file
+        PACKAGE_MANIFEST=$(cat package/manifest.json)
+
+        # Extract the version information
+        VERSION=$(echo "$PACKAGE_MANIFEST" | jq -r '.version')
+        CHANGELOG=$(echo "$PACKAGE_MANIFEST" | jq -r '.changelog')
+        TARGET_ABI=$(echo "$PACKAGE_MANIFEST" | jq -r '.targetAbi')
+        SOURCE_URL=$(echo "$PACKAGE_MANIFEST" | jq -r '.sourceUrl')
+        CHECKSUM=$(echo "$PACKAGE_MANIFEST" | jq -r '.checksum')
+        TIMESTAMP=$(echo "$PACKAGE_MANIFEST" | jq -r '.timestamp')
+
+        # Update the main manifest.json file
+        # Create a temporary file with the new version entry at the top of the versions array
+        jq --arg version "$VERSION" \
+           --arg changelog "$CHANGELOG" \
+           --arg targetAbi "$TARGET_ABI" \
+           --arg sourceUrl "$SOURCE_URL" \
+           --arg checksum "$CHECKSUM" \
+           --arg timestamp "$TIMESTAMP" \
+           '.[0].versions = ([{
+             "version": $version,
+             "changelog": $changelog,
+             "targetAbi": $targetAbi,
+             "sourceUrl": $sourceUrl,
+             "checksum": $checksum,
+             "timestamp": $timestamp
+           }] + .[0].versions)' manifest.json > manifest.json.new
+
+        # Replace the original file
+        mv manifest.json.new manifest.json
+
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "zip_file=$(ls package/*.zip)" >> $GITHUB_OUTPUT
+
     - name: Commit and push manifest update
       run: |
         # Commit and push the changes
         git config --global user.name "GitHub Actions"
         git config --global user.email "actions@github.com"
+
+        # Get the default branch name
+        default_branch=$(git remote show origin | grep 'HEAD branch' | cut -d' ' -f5)
+        echo "Default branch is $default_branch"
+
         git add manifest.json
         git commit -m "Update manifest.json with version ${{ steps.tag.outputs.tag }}"
-        git push origin $default_branch
+        git push origin HEAD:$default_branch
+
+    - name: Create GitHub Release
+      id: create_release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ steps.tag.outputs.tag }}
+        name: Release ${{ steps.tag.outputs.tag }}
+        body: |
+          See the [CHANGELOG.md](https://github.com/Pho3niX90/intro-skipper/blob/master/CHANGELOG.md) for details.
+        files: |
+          package/*.zip
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
