@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using ConfusedPolarBear.Plugin.IntroSkipper.Configuration;
 using MediaBrowser.Common.Configuration;
@@ -59,8 +61,8 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
 
         var introsDirectory = Path.Join(applicationPaths.PluginConfigurationsPath, "intros");
         FingerprintCachePath = Path.Join(introsDirectory, "cache");
-        _introPath = Path.Join(applicationPaths.PluginConfigurationsPath, "intros", "intros.xml");
-        _creditsPath = Path.Join(applicationPaths.PluginConfigurationsPath, "intros", "credits.xml");
+        _introPath = Path.Join(applicationPaths.PluginConfigurationsPath, "intros", "intros.json");
+        _creditsPath = Path.Join(applicationPaths.PluginConfigurationsPath, "intros", "credits.json");
 
         // Create the base & cache directories (if needed).
         if (!Directory.Exists(FingerprintCachePath))
@@ -168,25 +170,11 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
     {
         lock (_serializationLock)
         {
-            var introList = new List<Intro>();
+            var introList = Plugin.Instance!.Intros.Values.ToList();
+            File.WriteAllText(_introPath, JsonSerializer.Serialize(introList));
 
-            // Serialize intros
-            foreach (var intro in Plugin.Instance!.Intros)
-            {
-                introList.Add(intro.Value);
-            }
-
-            _xmlSerializer.SerializeToFile(introList, _introPath);
-
-            // Serialize credits
-            introList.Clear();
-
-            foreach (var intro in Plugin.Instance!.Credits)
-            {
-                introList.Add(intro.Value);
-            }
-
-            _xmlSerializer.SerializeToFile(introList, _creditsPath);
+            var creditList = Plugin.Instance!.Credits.Values.ToList();
+            File.WriteAllText(_creditsPath, JsonSerializer.Serialize(creditList));
         }
     }
 
@@ -197,26 +185,25 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
     {
         if (File.Exists(_introPath))
         {
-            // Since dictionaries can't be easily serialized, analysis results are stored on disk as a list.
-            var introList = (List<Intro>)_xmlSerializer.DeserializeFromFile(
-                typeof(List<Intro>),
-                _introPath);
-
-            foreach (var intro in introList)
+            var introList = JsonSerializer.Deserialize<List<Intro>>(File.ReadAllText(_introPath));
+            if (introList != null)
             {
-                Plugin.Instance!.Intros[intro.EpisodeId] = intro;
+                foreach (var intro in introList)
+                {
+                    Plugin.Instance!.Intros[intro.EpisodeId] = intro;
+                }
             }
         }
 
         if (File.Exists(_creditsPath))
         {
-            var creditList = (List<Intro>)_xmlSerializer.DeserializeFromFile(
-                typeof(List<Intro>),
-                _creditsPath);
-
-            foreach (var credit in creditList)
+            var creditList = JsonSerializer.Deserialize<List<Intro>>(File.ReadAllText(_creditsPath));
+            if (creditList != null)
             {
-                Plugin.Instance!.Credits[credit.EpisodeId] = credit;
+                foreach (var credit in creditList)
+                {
+                    Plugin.Instance!.Credits[credit.EpisodeId] = credit;
+                }
             }
         }
     }
