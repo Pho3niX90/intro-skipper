@@ -28,9 +28,6 @@ jobs:
     - name: Restore dependencies
       run: dotnet restore
 
-    - name: Install jq
-      run: sudo apt-get install -y jq
-
     - name: Package
       run: .github/workflows/package.sh ${{ steps.tag.outputs.tag }}
 
@@ -45,20 +42,6 @@ jobs:
 
     - name: Commit and push manifest update
       run: |
-        # Get the default branch name (usually main or master)
-        default_branch=$(git remote show origin | grep 'HEAD branch' | cut -d' ' -f5)
-
-        # Checkout the default branch
-        git checkout $default_branch
-
-        # Apply the manifest changes to the default branch
-        # We need to regenerate the manifest entry since we're on a different branch now
-        cd package
-        cp version_entry.json manifest.json
-        cd ..
-        jq --argjson new_version "$(cat package/version_entry.json)" '.[0].versions = [$new_version] + .[0].versions' manifest.json > manifest.json.new
-        mv manifest.json.new manifest.json
-
         # Commit and push the changes
         git config --global user.name "GitHub Actions"
         git config --global user.email "actions@github.com"
